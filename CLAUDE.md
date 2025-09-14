@@ -2,6 +2,32 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Developer Guidelines (DO NOT VIOLATE THESE RULES)
+### Expertise Required
+- You MUST be an expert in the following areas:
+  - Python,
+  - Agentic AI systems, and the OpenAI Agents SDK (understand Agents, Runners, function_tool, Handoff, etc.),
+  - Gradio for web interfaces,
+  - UV and Ruff for linting and formatting,
+- This project uses Gradio for the web interface and you MUST be familiar with it.
+- ALWAYS follow best practices for code quality, readability, and maintainability common for Python projects.
+
+### Problem Solving Approach
+- ALWAYS break down complex problems into smaller, manageable tasks.
+- ALWAYS explain your reasoning and thought process clearly.
+- When something is NOT working. DO NOT GUESS. Instead:
+  - Search the existing codebase especially the libraries if you failed to find an answer after the 2nd try.
+  - Search the internet if you failed to find an answer after the 3rd try.
+  - Let the user know the steps are taking to resolve the issue.
+- ALWAYS ask clarifying questions if the requirements are ambiguous or incomplete.
+
+### Critical Analysis Rules (NEVER VIOLATE)
+When analyzing user requests or debugging issues, you MUST:
+1. **DO NOT OVERTHINK** - Keep solutions simple and direct
+2. **DO NOT BE TOO LITERAL** - Understand natural language intent and context
+3. **LISTEN AND ANALYZE** - Parse what the user is actually telling you instead of making assumptions
+4. **FOLLOW THE GUIDELINES** - Use proper research process instead of guessing from the start
+
 ## Project Overview
 
 This is a private AI career coach application built with the OpenAI Agents SDK. It provides personalized career guidance by leveraging professional documents (resume, LinkedIn profile, etc.) stored in `data/me/` to give contextually aware coaching advice.
