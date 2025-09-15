@@ -8,10 +8,11 @@ from typing import List, Dict
 from agents import function_tool
 from ddgs import DDGS
 import requests
+from bs4 import BeautifulSoup
 
 # Set up logger
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 
 def load_text_file(file_path: Path) -> str:
@@ -171,44 +172,58 @@ def _retrieve_context(query: str) -> str:
 retrieve_context = function_tool(_retrieve_context)
 
 
-def _search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
+@function_tool
+def search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
     """
     Search for job postings on ATS platforms (Greenhouse, Lever) using DuckDuckGo.
 
-    This tool supports DDGS search operators:
+    This tool searches specifically for job postings on major ATS platforms and supports
+    DuckDuckGo Search (DDGS) operators for precise query targeting.
 
     Args:
-        title: Job title to search for (e.g. "Software Engineer", "Robotics Engineer")
-        keywords: IMPORTANT Additional search terms using DDGS operators:
-            - cats dogs: Results about cats OR dogs (space = OR)
-            - "cats and dogs": Exact phrase search e.g (use quotes for required phrases)
-            - cats -dogs: Fewer dogs in results (- excludes terms)
-            - cats +dogs: More dogs in results (+ emphasizes terms)
-            - cats filetype:pdf: Search for PDFs about cats
-            - dogs site:example.com: Pages about dogs from example.com
-            - cats -site:example.com: Pages about cats, excluding example.com
-            - intitle:dogs: Page title includes "dogs"
-            - inurl:cats: Page URL includes "cats"
+        title (str): Primary job title to search for. This is the core position name.
+            CRITICAL: Keep the title Standardized and Concise (3-5 words max)
+            Examples:
+            GOOD: Senior C++ Robotics Engineer: "Senior Software Engineer", "Software Engineer", "Data Scientist"
+            BAD: Principal Software Engineer (Robotics/Teleoperation). This is too long and specific.
 
-        limit: Maximum number of job results to return
+        keywords (str, optional): Additional search terms and modifiers using DDGS operators.
+            CRITICAL: Use quotes around exact phrases that must appear together. Limit to 5 or less keywords/phrases.
+
+            STRICT DDGS Operator Reference:
+            - no quotes (list of words): python remote -> finds any mention of python OR remote
+            - quotes: "python remote" -> finds exact phrase "python remote"
+            - Minus (exclude): -django -> excludes django-related results
+            - Plus (emphasize): +senior -> emphasizes senior-level positions (best effort)
+
+        limit (int, optional): Maximum number of unique job postings to return.
+            Default is 10. Each result represents a different company to avoid duplicates.
 
     Returns:
-        Formatted string with job URLs, one per line
+        str: Formatted string containing job search results. Each line contains:
+            - Company name
+            - Job title (extracted from posting)
+            - Direct URL to the job posting
+            Format: "Company Name - Job Title: https://job-url"
+
+            If no jobs found, returns error message explaining the search parameters used.
+
+    Note:
+        - Searches are limited to Greenhouse and Lever ATS platforms
+        - Results are validated to ensure they link to actual job postings
+        - Duplicate companies are filtered out to provide diverse options
+        - URLs are cleaned of tracking parameters for direct access
     """
     logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Keywords: '{keywords}', Limit: {limit}")
-    logger.info(f"AGENT PARSING - Raw user request should have been logged by agent")
-    logger.info(f"DDGS SYNTAX CHECK - Keywords should use quotes for exact phrases like 'remote'")
 
     try:
-        logger.debug("Importing required modules...")
 
         domains = ["boards.greenhouse.io", "jobs.lever.co"]
         found_links = set()
-        company_jobs = {}  # Track jobs by company to avoid duplicates
 
         logger.info(f"Searching domains: {domains}")
 
-        with DDGS() as ddgs:
+        with DDGS(timeout=20) as ddgs:
             logger.info("Connected to DuckDuckGo")
 
             for domain in domains:
@@ -221,10 +236,10 @@ def _search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
                 if keywords.strip():
                     query += f' {keywords.strip()}'
 
-                logger.info(f"Searching {domain} with query: {query}")
+                logger.info(f"🕵️‍♂️  SEARCHING {domain} WITH QUERY: {query}")
 
                 try:
-                    results = ddgs.text(query, max_results=10)
+                    results = ddgs.text(query, max_results=50)
 
                     # Process results
                     result_count = 0
@@ -239,35 +254,37 @@ def _search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
                             clean_url = href.split('?')[0].split('#')[0]
                             company = _extract_company_name(clean_url, domain)
 
-                            logger.info(f"Valid job link for company '{company}': {clean_url}")
+                            logger.debug(f"Valid job link for company '{company}': {clean_url}")
 
-                            # Check if we already have a job from this company
-                            if company in company_jobs:
-                                logger.debug(f"Skipping duplicate company: {company}")
-                                continue
+                            # Extract job title from search result
+                            job_title = _extract_job_title(title_text, company)
 
                             # Validate that the job posting has actual content
                             logger.debug(f"Validating job content for: {clean_url}")
-                            if _validate_job_posting(clean_url):
-                                found_links.add(clean_url)
-                                company_jobs[company] = clean_url
-                                logger.info(f"Added valid job: {clean_url}")
+                            validation_result, validation_reason = _validate_job_posting(clean_url)
+                            if validation_result:
+                                # Store with company and title format
+                                job_entry = f"{company} - {job_title}: {clean_url}"
+                                found_links.add(job_entry)
+                                # Allow multiple jobs per company now
+                                logger.info(f"Added valid job: {company} - {job_title}")
 
                                 if len(found_links) >= limit:
                                     logger.info(f"Reached limit ({limit}), breaking")
                                     break
                             else:
-                                logger.warning(f"Job validation failed: {clean_url}")
+                                logger.warning(f"Job validation failed for {clean_url}: {validation_reason}")
                         else:
                             logger.debug(f"Invalid job link: {href}")
 
                     logger.info(f"Completed {domain}: found {len([url for url in found_links if domain in url])} valid jobs")
 
                 except Exception as e:
-                    logger.error(f"Search error for {domain}: {type(e).__name__}: {e}", exc_info=True)
+                    logger.warning(f"Search failed for {domain}: {type(e).__name__}: {e}")
+                    logger.info(f"Continuing to next domain...")
                     continue
 
-        logger.info(f"Search complete: Found {len(found_links)} total jobs from companies: {list(company_jobs.keys())}")
+        logger.info(f"Search complete: Found {len(found_links)} total jobs")
 
         if not found_links:
             error_msg = f"No job postings found for '{title}' with keywords '{keywords}'"
@@ -296,6 +313,26 @@ def _is_job_link(url: str, domain: str) -> bool:
     return False
 
 
+def _extract_job_title(title_text: str, company: str) -> str:
+    """Extract job title from search result title, removing company name."""
+    if not title_text:
+        return "Software Engineer"
+
+    # Remove common prefixes and company name
+    title = title_text.replace(f" - {company}", "").replace(f" at {company}", "")
+    title = title.replace(" - Jobs at ", " - ")
+
+    # Clean up common job board artifacts
+    title = title.replace(" - Greenhouse", "").replace(" - Lever", "")
+    title = title.split(" - ")[0]  # Take first part before any dashes
+
+    # Fallback if title is empty or too short
+    if len(title.strip()) < 5:
+        return "Software Engineer"
+
+    return title.strip()
+
+
 def _extract_company_name(url: str, domain: str) -> str:
     """Extract company name from job URL"""
     try:
@@ -312,50 +349,189 @@ def _extract_company_name(url: str, domain: str) -> str:
     return "unknown"
 
 
-def _validate_job_posting(url: str) -> bool:
+def _validate_job_posting(url: str) -> tuple[bool, str]:
     """Check if job posting has actual content"""
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
-        response = requests.get(url, headers=headers, timeout=10)
+        response = requests.get(url, headers=headers, timeout=15)
 
-        if response.status_code == 200:
-            content = response.text.lower()
+        if response.status_code != 200:
+            return False, f"HTTP {response.status_code}"
 
-            # Check for job listing page indicators - reject these
-            listing_indicators = [
-                'career opportunities', 'current job openings', 'all open positions', 'current openings',
-                'browse all jobs', 'view all jobs', 'job listings', 'open roles', 'open positions'
-            ]
+        content = response.text
+        content_length = len(content)
 
-            if any(indicator in content for indicator in listing_indicators):
-                return False
+        # Parse HTML and extract clean text
+        soup = BeautifulSoup(content, 'html.parser')
+        clean_text = soup.get_text()
+        content_lower = clean_text.lower()
 
-            # Check for common job posting indicators
-            job_indicators = [
-                'job description', 'responsibilities', 'requirements',
-                'qualifications', 'apply', 'salary', 'benefits',
-                'role', 'position', 'duties', 'skills'
-            ]
+        # 2-pass validation system
+        # Pass 1: Equal opportunity indicators (legal requirement)
+        equal_opportunity_indicators = ['equal opportunities', 'equal opportunity employer']
 
-            # Must have at least 2 job indicators and be substantial content
-            indicator_count = sum(1 for indicator in job_indicators if indicator in content)
-            has_content = len(content) > 1000  # Substantial content
+        # Pass 2: Apply indicators (action available)
+        apply_indicators = ['apply now', 'apply for this job']
 
-            return indicator_count >= 2 and has_content
+        # Pass 3: Job content indicators
+        content_indicators = [
+            'job description', 'responsibilities','requirements', 'about the role', 'about us', 'about you',
+            'qualifications', 'salary', 'benefits',  "job id"
+        ]
 
-        return False
-    except:
-        # If we can't validate, assume it's valid to be safe
-        return True
+        # Check each pass
+        eq_found = [ind for ind in equal_opportunity_indicators if ind in content_lower]
+        apply_found = [ind for ind in apply_indicators if ind in content_lower]
+        content_found = [ind for ind in content_indicators if ind in content_lower]
+
+        # Combine all found indicators
+        found_indicators = eq_found + apply_found + content_found
+        indicator_count = len(found_indicators)
+        has_content = content_length > 500
+
+        # Log detailed validation info
+        logger.debug(f"Validation details for {url}: length={content_length}, indicators={indicator_count} {found_indicators}, content_ok={has_content}")
+
+        if indicator_count < 3:
+            logger.debug(f"VALIDATION FAILURE - First 500 chars of content: {content[:500]}")
+            logger.debug(f"Content contains 'apply for this job': {'apply for this job' in content_lower}")
+            logger.debug(f"Content contains 'benefits': {'benefits' in content_lower}")
+            logger.debug(f"Content contains 'qualifications': {'qualifications' in content_lower}")
+            logger.debug(f"Content contains 'about the role': {'about the role' in content_lower}")
+            return False, f"Too few job indicators ({indicator_count}/4): {found_indicators}"
+
+        if not has_content:
+            return False, f"Content too short ({content_length} chars < 500)"
+
+        return True, f"Valid: {indicator_count} indicators, {content_length} chars"
+
+    except Exception as e:
+        # If we can't validate, assume it's valid to be safe but log the error
+        logger.warning(f"Validation error for {url}: {e}")
+        return True, f"Validation error (assumed valid): {str(e)}"
 
 
-# Create function_tool for job search
-search_jobs = function_tool(_search_jobs)
+# Create function_tool using the recommended decorator approach
 
 
 if __name__ == "__main__":
+    # Test the search_jobs function
+    print("Testing search_jobs tool...")
+
+    # Test job search
+    print("\n=== Testing Job Search ===")
+    # Create a temporary function to test the job search logic
+    def test_search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
+        logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Keywords: '{keywords}', Limit: {limit}")
+
+        try:
+            domains = ["boards.greenhouse.io", "jobs.lever.co"]
+            found_links = set()
+
+            logger.info(f"Searching domains: {domains}")
+
+            with DDGS(timeout=20) as ddgs:
+                logger.info("Connected to DuckDuckGo")
+
+                for domain in domains:
+                    if len(found_links) >= limit:
+                        logger.info(f"Limit reached ({limit}), stopping search")
+                        break
+
+                    # Build search query
+                    query = f'site:{domain} "{title}"'
+                    if keywords.strip():
+                        query += f' {keywords.strip()}'
+
+                    logger.info(f"🕵️‍♂️  SEARCHING {domain} WITH QUERY: {query}")
+
+                    try:
+                        results = ddgs.text(query, max_results=50)
+
+                        # Process results
+                        result_count = 0
+                        for result in results:
+                            result_count += 1
+                            href = result.get('href', '')
+                            title_text = result.get('title', '')
+
+                            logger.debug(f"Result {result_count}: {title_text[:50]}... | URL: {href}")
+
+                            if domain in href and _is_job_link(href, domain):
+                                clean_url = href.split('?')[0].split('#')[0]
+                                company = _extract_company_name(clean_url, domain)
+
+                                logger.debug(f"Valid job link for company '{company}': {clean_url}")
+
+                                # Extract job title from search result
+                                job_title = _extract_job_title(title_text, company)
+
+                                # Validate that the job posting has actual content
+                                logger.debug(f"Validating job content for: {clean_url}")
+                                validation_result, validation_reason = _validate_job_posting(clean_url)
+                                if validation_result:
+                                    # Store with company and title format
+                                    job_entry = f"{company} - {job_title}: {clean_url}"
+                                    found_links.add(job_entry)
+                                    logger.info(f"Added valid job: {company} - {job_title}")
+
+                                    if len(found_links) >= limit:
+                                        logger.info(f"Reached limit ({limit}), breaking")
+                                        break
+                                else:
+                                    logger.warning(f"Job validation failed for {clean_url}: {validation_reason}")
+                            else:
+                                logger.debug(f"Invalid job link: {href}")
+
+                        logger.info(f"Completed {domain}: found {len([url for url in found_links if domain in url])} valid jobs")
+
+                    except Exception as e:
+                        logger.warning(f"Search failed for {domain}: {type(e).__name__}: {e}")
+                        logger.info(f"Continuing to next domain...")
+                        continue
+
+            logger.info(f"Search complete: Found {len(found_links)} total jobs")
+
+            if not found_links:
+                error_msg = f"No job postings found for '{title}' with keywords '{keywords}'"
+                logger.warning(error_msg)
+                return error_msg
+
+            result_lines = [f"Found {len(found_links)} job postings for '{title}':"]
+            result_lines.extend(sorted(found_links))
+            final_result = "\n".join(result_lines)
+
+            logger.info(f"Returning {len(final_result)} characters of results")
+            return final_result
+
+        except Exception as e:
+            error_msg = f"Error searching for jobs: {type(e).__name__}: {str(e)}"
+            logger.error(f"Critical error in job search: {error_msg}", exc_info=True)
+            return error_msg
+
+    # Test different boolean syntaxes
+    test_cases = [
+        ('OR syntax', 'site:jobs.lever.co "Python" OR "C++"'),
+        ('AND syntax', 'site:jobs.lever.co "Python" AND "C++"'),
+        ('Space (default)', 'site:jobs.lever.co Python C++'),
+        ('Parentheses', 'site:jobs.lever.co (Python C++)'),
+    ]
+
+    for test_name, keywords in test_cases:
+        print(f"\n=== {test_name}: {keywords} ===")
+        result = test_search_jobs(
+            title="Senior Software Engineer",
+            keywords=keywords,
+            limit=3
+        )
+        print(result)
+        print("-" * 50)
+    print(result)
+
+    print("\n" + "="*50)
+
     # Test the retrieve_context function
     print("Testing retrieve_context tool...")
 

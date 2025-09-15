@@ -23,10 +23,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Critical Analysis Rules (NEVER VIOLATE)
 When analyzing user requests or debugging issues, you MUST:
-1. **DO NOT OVERTHINK** - Keep solutions simple and direct
-2. **DO NOT BE TOO LITERAL** - Understand natural language intent and context
-3. **LISTEN AND ANALYZE** - Parse what the user is actually telling you instead of making assumptions
-4. **FOLLOW THE GUIDELINES** - Use proper research process instead of guessing from the start
+1. **TROUBLESHOOT SYSTEMATICALLY** - Before making ANY code changes, test, search, and analyze potential root causes
+2. **DO NOT OVERTHINK** - Keep solutions simple and direct
+3. **DO NOT BE TOO LITERAL** - Understand natural language intent and context
+4. **TRUST THE USER** - The user is a highly skilled developer and knows what they want. Do not second guess them.
+5. **FOLLOW THE GUIDELINES** - Use proper research process instead of guessing from the start
 
 ## Project Overview
 
