@@ -172,29 +172,139 @@ def _retrieve_context(query: str) -> str:
 retrieve_context = function_tool(_retrieve_context)
 
 
-@function_tool
-def search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
+def parse_expression(expression: str) -> dict:
     """
-    Search for job postings on ATS platforms (Greenhouse, Lever) using DuckDuckGo.
+    Parse a custom expression into components for query building.
 
-    This tool searches specifically for job postings on major ATS platforms and supports
-    DuckDuckGo Search (DDGS) operators for precise query targeting.
+    Expression syntax:
+    - && = AND (required terms)
+    - || = OR (alternative terms)
+    - - = NOT (excluded terms)
+    - () = grouping
+
+    Example: "senior && remote && -firmware && (robotics || iot)"
+
+    Returns:
+        dict with 'required', 'excluded', and 'alternatives' lists
+    """
+    if not expression.strip():
+        return {"required": [], "excluded": [], "alternatives": []}
+
+    # Simple parser for now - can be enhanced later
+    parts = {"required": [], "excluded": [], "alternatives": []}
+
+    # Split on && to get main required parts
+    and_parts = expression.split("&&")
+
+    for part in and_parts:
+        part = part.strip()
+        if not part:
+            continue
+
+        if part.startswith("-"):
+            # Excluded term
+            excluded = part[1:].strip()
+            if excluded.startswith("(") and excluded.endswith(")"):
+                # Handle grouped exclusions: -(react || javascript)
+                group_content = excluded[1:-1]
+                excluded_terms = [term.strip() for term in group_content.split("||")]
+                parts["excluded"].extend(excluded_terms)
+            else:
+                parts["excluded"].append(excluded)
+        elif "||" in part:
+            # OR group - alternatives
+            if part.startswith("(") and part.endswith(")"):
+                part = part[1:-1]  # Remove parentheses
+            alternatives = [term.strip() for term in part.split("||")]
+            parts["alternatives"].extend(alternatives)
+        else:
+            # Required term
+            parts["required"].append(part)
+
+    return parts
+
+
+def compile_query_for_backend(title: str, expression_parts: dict, backend: str) -> str:
+    """
+    Compile parsed expression into backend-specific query syntax.
+
+    Args:
+        title: Job title (always quoted)
+        expression_parts: Parsed expression from parse_expression()
+        backend: "google", "bing", or "yahoo"
+
+    Returns:
+        Backend-specific query string
+    """
+    # Start with quoted title
+    query_parts = [f'"{title}"']
+
+    # Add required terms
+    if expression_parts["required"]:
+        if backend == "google":
+            # Google treats space as implicit AND
+            query_parts.extend(expression_parts["required"])
+        elif backend in ["bing", "yahoo"]:
+            # Bing and Yahoo need explicit AND (capitalized)
+            for req in expression_parts["required"]:
+                query_parts.append(f"AND {req}")
+
+    # Add alternatives (OR groups)
+    if expression_parts["alternatives"]:
+        if backend in ["google", "bing", "yahoo"]:
+            # All support OR (must be capitalized)
+            or_group = " OR ".join(expression_parts["alternatives"])
+            if len(expression_parts["alternatives"]) > 1:
+                or_group = f"({or_group})"
+
+            if backend in ["bing", "yahoo"] and query_parts:
+                query_parts.append(f"AND {or_group}")
+            else:
+                query_parts.append(or_group)
+
+    # Add exclusions
+    if expression_parts["excluded"]:
+        if backend == "google":
+            # Google uses minus operator
+            for excluded in expression_parts["excluded"]:
+                query_parts.append(f"-{excluded}")
+        elif backend in ["bing", "yahoo"]:
+            # Bing and Yahoo use NOT (capitalized)
+            for excluded in expression_parts["excluded"]:
+                query_parts.append(f"NOT {excluded}")
+
+    return " ".join(query_parts)
+
+
+@function_tool
+def search_jobs(title: str, expression: str = "", backend: str = "google", limit: int = 10) -> str:
+    """
+    Search for job postings on ATS platforms using custom expression language.
+
+    This tool uses a custom boolean expression language that compiles to backend-specific
+    search syntax, providing reliable boolean logic across different search engines.
 
     Args:
         title (str): Primary job title to search for. This is the core position name.
             CRITICAL: Keep the title Standardized and Concise (3-5 words max)
             Examples:
-            GOOD: Senior C++ Robotics Engineer: "Senior Software Engineer", "Software Engineer", "Data Scientist"
-            BAD: Principal Software Engineer (Robotics/Teleoperation). This is too long and specific.
+            GOOD: "Senior Software Engineer", "Software Engineer", "Product Manager"
+            BAD: "Principal Software Engineer (Robotics/Teleoperation)" - too long and specific
 
-        keywords (str, optional): Additional search terms and modifiers using DDGS operators.
-            CRITICAL: Use quotes around exact phrases that must appear together. Limit to 5 or less keywords/phrases.
+        expression (str, optional): Boolean expression using custom syntax:
+            EXPRESSION SYNTAX:
+            - && = AND (required terms): senior && remote
+            - || = OR (alternatives): (robotics || iot || autonomous)
+            - - = NOT (exclusions): -firmware && -intern
+            - () = grouping: (python || c++) && -frontend
 
-            STRICT DDGS Operator Reference:
-            - no quotes (list of words): python remote -> finds any mention of python OR remote
-            - quotes: "python remote" -> finds exact phrase "python remote"
-            - Minus (exclude): -django -> excludes django-related results
-            - Plus (emphasize): +senior -> emphasizes senior-level positions (best effort)
+            Examples:
+            Expressions should NOT repeat the title terms.
+            BAD: "embedded && remote" (title already has embedded. e.g "Embedded Software Engineer")
+            GOOD: "(robotics || iot) && -simulation && remote"
+
+        backend (str, optional): Search engine backend ("google", "bing", or "yahoo").
+            Default is "google".
 
         limit (int, optional): Maximum number of unique job postings to return.
             Default is 10. Each result represents a different company to avoid duplicates.
@@ -214,9 +324,12 @@ def search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
         - Duplicate companies are filtered out to provide diverse options
         - URLs are cleaned of tracking parameters for direct access
     """
-    logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Keywords: '{keywords}', Limit: {limit}")
+    logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Expression: '{expression}', Backend: '{backend}', Limit: {limit}")
 
     try:
+        # Parse the custom expression
+        expression_parts = parse_expression(expression)
+        logger.info(f"Parsed expression: {expression_parts}")
 
         domains = ["boards.greenhouse.io", "jobs.lever.co"]
         found_links = set()
@@ -224,22 +337,22 @@ def search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
         logger.info(f"Searching domains: {domains}")
 
         with DDGS(timeout=20) as ddgs:
-            logger.info("Connected to DuckDuckGo")
+            logger.info(f"Connected to DuckDuckGo ({backend} backend)")
 
             for domain in domains:
                 if len(found_links) >= limit:
                     logger.info(f"Limit reached ({limit}), stopping search")
                     break
 
-                # Build search query
-                query = f'site:{domain} "{title}"'
-                if keywords.strip():
-                    query += f' {keywords.strip()}'
+                # Build search query using expression language
+                compiled_query = compile_query_for_backend(title, expression_parts, backend)
+                query = f'site:{domain} {compiled_query}'
 
-                logger.info(f"🕵️‍♂️  SEARCHING {domain} WITH QUERY: {query}")
+                logger.info(f"🌐 SEARCHING {domain} WITH QUERY: {query}")
 
                 try:
-                    results = ddgs.text(query, max_results=50)
+                    # Use specified backend
+                    results = ddgs.text(query, max_results=50, backend=backend)
 
                     # Process results
                     result_count = 0
@@ -287,7 +400,7 @@ def search_jobs(title: str, keywords: str = "", limit: int = 10) -> str:
         logger.info(f"Search complete: Found {len(found_links)} total jobs")
 
         if not found_links:
-            error_msg = f"No job postings found for '{title}' with keywords '{keywords}'"
+            error_msg = f"No job postings found for '{title}' with expression '{expression}' using {backend} backend"
             logger.warning(error_msg)
             return error_msg
 
@@ -448,7 +561,8 @@ if __name__ == "__main__":
                     logger.info(f"🕵️‍♂️  SEARCHING {domain} WITH QUERY: {query}")
 
                     try:
-                        results = ddgs.text(query, max_results=50)
+                        # Use Google backend only for consistent AND logic
+                        results = ddgs.text(query, max_results=50, backend="backend")
 
                         # Process results
                         result_count = 0
@@ -513,10 +627,10 @@ if __name__ == "__main__":
 
     # Test different boolean syntaxes
     test_cases = [
-        ('OR syntax', 'site:jobs.lever.co "Python" OR "C++"'),
-        ('AND syntax', 'site:jobs.lever.co "Python" AND "C++"'),
-        ('Space (default)', 'site:jobs.lever.co Python C++'),
-        ('Parentheses', 'site:jobs.lever.co (Python C++)'),
+        ('OR syntax', 'site:jobs.lever.co IBM OR Cobol'),
+        ('AND syntax', 'site:jobs.lever.co IBM AND Cobol'),
+        #('Space (default)', 'site:jobs.lever.co Python C++'),
+        #('Parentheses', 'site:jobs.lever.co (Python C++)'),
     ]
 
     for test_name, keywords in test_cases:
