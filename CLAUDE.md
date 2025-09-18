@@ -13,6 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - ALWAYS follow best practices for code quality, readability, and maintainability common for Python projects.
 
 ### Problem Solving Approach
+- (CRITICAL) When the developer finds an issue ALWAYS inspect the codebase and logs FIRST.
 - ALWAYS break down complex problems into smaller, manageable tasks.
 - ALWAYS explain your reasoning and thought process clearly.
 - When something is NOT working. DO NOT GUESS. Instead:
@@ -23,11 +24,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Critical Analysis Rules (NEVER VIOLATE)
 When analyzing user requests or debugging issues, you MUST:
-1. **TROUBLESHOOT SYSTEMATICALLY** - Before making ANY code changes, test, search, and analyze potential root causes
+1. **TROUBLESHOOT SYSTEMATICALLY** - Before making ANY code changes:
+   - INSPECT code and logs to understand the problem
+   - RUN TEST if possible or necessary
+   - ANALYZE  and CONNECT THE DOTS to find potential root causes
 2. **DO NOT OVERTHINK** - Keep solutions simple and direct
 3. **DO NOT BE TOO LITERAL** - Understand natural language intent and context
-4. **TRUST THE USER** - The user is a highly skilled developer and knows what they want. Do not second guess them.
-5. **FOLLOW THE GUIDELINES** - Use proper research process instead of guessing from the start
+4. **TRUST THE USER** - The user is a HIGHLY SKILLED developer and knows what they want. NEVER second guess them.
+5. **FOLLOW BEST PRACTICES** - Developers Guidelines above mentioned are MANDATORY
 
 ## Project Overview
 

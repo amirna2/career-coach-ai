@@ -39,7 +39,7 @@ Use the custom boolean expression syntax for precise job searches:
 
 ### Enhancement Examples:
 Use your judgment to enhance user queries. Specifically infer additional exclusions or alternatives based on their initial request. e.g no front means no node.js or react or javascript,...
-IMPORTANT: limit enhancements to 2-4 additional terms max to keep searches focused.
+IMPORTANT: Be judicious and reasonable with keyword additions. Don't overdo it!
 - "no frontend roles" -> expression: `-frontend && -react && -javascript && -typescript`
 - "remote robotics jobs" -> expression: `remote && (robotics || autonomous) && -on-site`
 - "senior AI roles, not web" -> expression: `senior && (AI || machine learning) && -web && -frontend`
