@@ -106,13 +106,13 @@ def compile_query_for_backend(title: str, expression_parts: dict, backend: str) 
     # Add exclusions
     if expression_parts["excluded"]:
         if backend == "google":
-            # Google uses minus operator
+            # Google uses minus operator with quotes to avoid XSS filtering
             for excluded in expression_parts["excluded"]:
-                query_parts.append(f"-{excluded}")
+                query_parts.append(f'-"{excluded}"')
         elif backend in ["bing", "yahoo"]:
-            # Bing and Yahoo use NOT (capitalized)
+            # Bing and Yahoo use NOT (capitalized) with quotes
             for excluded in expression_parts["excluded"]:
-                query_parts.append(f"NOT {excluded}")
+                query_parts.append(f'NOT "{excluded}"')
 
     return " ".join(query_parts)
 
@@ -172,7 +172,7 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
         expression_parts = parse_expression(expression)
         logger.info(f"Parsed expression: {expression_parts}")
 
-        domains = ["boards.greenhouse.io", "jobs.lever.co"]
+        domains = ["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]
         found_links = set()
 
         logger.info(f"Searching domains: {domains}")
@@ -181,13 +181,9 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
             logger.info(f"Connected to DuckDuckGo ({backend} backend)")
 
             for domain in domains:
-                if len(found_links) >= limit:
-                    logger.info(f"Limit reached ({limit}), stopping search")
-                    break
-
                 # Build search query using expression language
                 compiled_query = compile_query_for_backend(title, expression_parts, backend)
-                query = f'site:{domain} {compiled_query}'
+                query = f'site:{domain} {compiled_query} intext:"apply"'
 
                 logger.info(f"🌐 SEARCHING {domain} WITH QUERY: {query}")
 
@@ -245,9 +241,18 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
             logger.warning(error_msg)
             return error_msg
 
-        result_lines = [f"Found {len(found_links)} job postings for '{title}':"]
-        result_lines.extend(sorted(found_links))
-        final_result = "\n".join(result_lines)
+        # Return concise format to avoid AI response truncation
+        if len(found_links) <= 5:
+            result_lines = [f"Found {len(found_links)} job postings for '{title}':"]
+            result_lines.extend(sorted(found_links))
+            final_result = "\n".join(result_lines)
+        else:
+            # For larger result sets, use more concise format
+            sorted_links = sorted(found_links)
+            result_lines = [f"Found {len(found_links)} job postings for '{title}' (showing all):"]
+            for i, link in enumerate(sorted_links, 1):
+                result_lines.append(f"{i}. {link}")
+            final_result = "\n".join(result_lines)
 
         logger.info(f"Returning {len(final_result)} characters of results")
         return final_result
@@ -263,6 +268,9 @@ def _is_job_link(url: str, domain: str) -> bool:
     if "boards.greenhouse.io" in domain:
         return "/jobs/" in url
     elif "jobs.lever.co" in domain:
+        return url.count('/') >= 4
+    elif "jobs.ashbyhq.com" in domain:
+        # Ashby URLs: https://jobs.ashbyhq.com/company/job-id
         return url.count('/') >= 4
     return False
 
@@ -296,6 +304,10 @@ def _extract_company_name(url: str, domain: str) -> str:
             return parts[3] if len(parts) > 3 else "unknown"
         elif "jobs.lever.co" in domain:
             # Format: https://jobs.lever.co/company/job-id
+            parts = url.split('/')
+            return parts[3] if len(parts) > 3 else "unknown"
+        elif "jobs.ashbyhq.com" in domain:
+            # Format: https://jobs.ashbyhq.com/company/job-id
             parts = url.split('/')
             return parts[3] if len(parts) > 3 else "unknown"
     except:
