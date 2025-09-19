@@ -1,0 +1,60 @@
+# Career Coach AI Configuration
+# This file contains default configuration values that can be overridden
+
+# User-specific settings
+user:
+  name: "Amir"  # Change this to your name
+  data_directory: "data/me"
+  # current_date is auto-generated, but can be overridden here if needed
+
+# Core agent configuration
+agent:
+  name: "CareerCoach"
+  model: "gpt-4o"
+  instructions_template: "prompts/coach_system.md"
+  output_type: "StructuredResponse"
+
+# Job search tool settings
+job_search:
+  default_backend: "google"  # Options: google, bing, yahoo
+  default_limit: 50
+  domains:
+    - "boards.greenhouse.io"
+    - "jobs.lever.co"
+    - "jobs.ashbyhq.com"
+  timeout: 20
+
+# Document processing settings
+documents:
+  supported_extensions:
+    - ".pdf"
+    - ".txt"
+  encoding: "utf-8"
+  chunk_size: 1000
+  max_file_size_mb: 10
+
+# Gradio interface configuration
+interface:
+  title: "Career Coach AI - Phase 1"
+  description: "Your private AI career coach, ready to help with career strategy, interview prep, resume reviews, and professional development."
+  server_name: "127.0.0.1"
+  server_port: 7861
+  share: false
+  show_error: true
+  chatbot_height: 650
+  show_copy_button: true
+  show_copy_all_button: true
+  examples:
+    - "Help me tailor my resume summary for robotics teleops roles."
+    - "What skills should I emphasize when applying for senior embedded software roles?"
+    - "search for remote job openings compatible with my background. Limit to 20 results."
+
+# Logging configuration
+logging:
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  disable_httpx_noise: true
+
+# Environment variables (use ${VAR_NAME:default_value} syntax)
+# These will be loaded from .env file or environment
+openai_api_key: "${OPENAI_API_KEY}"

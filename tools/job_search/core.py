@@ -7,6 +7,7 @@ from copy import deepcopy
 from trafilatura.settings import DEFAULT_CONFIG
 from ddgs import DDGS
 from agents import function_tool
+from config import get_config
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -118,7 +119,7 @@ def compile_query_for_backend(title: str, expression_parts: dict, backend: str) 
 
 
 @function_tool
-def search_jobs(title: str, expression: str = "", backend: str = "google", limit: int = 10) -> str:
+def search_jobs(title: str, expression: str = "", backend: str = "google", limit: int = None) -> str:
     """
     Search for job postings on ATS platforms using custom expression language.
 
@@ -147,8 +148,8 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
         backend (str, optional): Search engine backend ("google", "bing", or "yahoo").
             Default is "google".
 
-        limit (int, optional): Maximum number of unique job postings to return.
-            Default is 10. Each result represents a different company to avoid duplicates.
+        limit (int, optional):
+            CRITICAL: ignore this parameter, UNLESS the user specifically requests a limit.
 
     Returns:
         str: Formatted string containing job search results. Each line contains:
@@ -165,19 +166,27 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
         - Duplicate companies are filtered out to provide diverse options
         - URLs are cleaned of tracking parameters for direct access
     """
-    logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Expression: '{expression}', Backend: '{backend}', Limit: {limit}")
+    logger.info(f"JOB SEARCH REQUEST - Title: '{title}', Expression: '{expression}', Backend: '{backend}'")
 
     try:
+        # Get configuration
+        config = get_config()
+
+        # Use config default if no limit specified
+        if limit is None:
+            limit = config.job_search.default_limit
+        logger.info(f"=================== Using result limit: {limit}")
         # Parse the custom expression
         expression_parts = parse_expression(expression)
         logger.info(f"Parsed expression: {expression_parts}")
 
-        domains = ["boards.greenhouse.io", "jobs.lever.co", "jobs.ashbyhq.com"]
+        # Use domains from configuration
+        domains = config.job_search.domains
         found_links = set()
 
         logger.info(f"Searching domains: {domains}")
 
-        with DDGS(timeout=20) as ddgs:
+        with DDGS(timeout=config.job_search.timeout) as ddgs:
             logger.info(f"Connected to DuckDuckGo ({backend} backend)")
 
             for domain in domains:
@@ -188,46 +197,63 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
                 logger.info(f"🌐 SEARCHING {domain} WITH QUERY: {query}")
 
                 try:
-                    # Use specified backend
-                    results = ddgs.text(query, max_results=50, backend=backend)
+                    # Track results for this domain
+                    domain_raw_count = 0
+                    domain_job_links = 0
+                    domain_valid_jobs = 0
 
-                    # Process results
-                    result_count = 0
-                    for result in results:
-                        result_count += 1
-                        href = result.get('href', '')
-                        title_text = result.get('title', '')
+                    # Search multiple pages to get more results
+                    for page in range(1, 6):  # Search first 5 pages
+                        if len(found_links) >= limit:
+                            break
 
-                        logger.debug(f"Result {result_count}: {title_text[:50]}... | URL: {href}")
+                        page_results = ddgs.text(query, max_results=10, page=page, backend=backend)
+                        page_results_list = list(page_results)
 
-                        if domain in href and _is_job_link(href, domain):
-                            clean_url = href.split('?')[0].split('#')[0]
-                            company = _extract_company_name(clean_url, domain)
+                        if not page_results_list:
+                            logger.info(f"No more results on page {page} for {domain}")
+                            break
 
-                            logger.debug(f"Valid job link for company '{company}': {clean_url}")
+                        logger.info(f"Page {page}: Got {len(page_results_list)} results for {domain}")
 
-                            # Extract job title from search result
-                            job_title = _extract_job_title(title_text, company)
+                        # Process results from this page
+                        for result in page_results_list:
+                            domain_raw_count += 1
+                            href = result.get('href', '')
+                            title_text = result.get('title', '')
 
-                            # Validate that the job posting has actual content
-                            logger.debug(f"Validating job content for: {clean_url}")
-                            validation_result, validation_reason = _validate_job_posting(clean_url)
-                            if validation_result:
-                                # Store with company and title format
-                                job_entry = f"{company} - {job_title}: {clean_url}"
-                                found_links.add(job_entry)
-                                # Allow multiple jobs per company now
-                                logger.info(f"Added valid job: {company} - {job_title}")
+                            logger.debug(f"Result: {title_text[:50]}... | URL: {href}")
 
-                                if len(found_links) >= limit:
-                                    logger.info(f"Reached limit ({limit}), breaking")
-                                    break
+                            if domain in href and _is_job_link(href, domain):
+                                domain_job_links += 1
+                                clean_url = href.split('?')[0].split('#')[0]
+                                company = _extract_company_name(clean_url, domain)
+
+                                logger.debug(f"Valid job link for company '{company}': {clean_url}")
+
+                                # Extract job title from search result
+                                job_title = _extract_job_title(title_text, company)
+
+                                # Validate that the job posting has actual content
+                                logger.debug(f"Validating job content for: {clean_url}")
+                                validation_result, validation_reason = _validate_job_posting(clean_url)
+                                if validation_result:
+                                    domain_valid_jobs += 1
+                                    # Store with company and title format
+                                    job_entry = f"{company} - {job_title}: {clean_url}"
+                                    found_links.add(job_entry)
+                                    # Allow multiple jobs per company now
+                                    logger.info(f"Added valid job: {company} - {job_title}")
+
+                                    if len(found_links) >= limit:
+                                        logger.info(f"Reached limit ({limit}), breaking")
+                                        break
+                                else:
+                                    logger.warning(f"Job validation failed for {clean_url} -> {validation_reason}")
                             else:
-                                logger.warning(f"Job validation failed for {clean_url}: {validation_reason}")
-                        else:
-                            logger.debug(f"Invalid job link: {href}")
+                                logger.debug(f"Invalid job link: {href}")
 
-                    logger.info(f"Completed {domain}: found {len([url for url in found_links if domain in url])} valid jobs")
+                    logger.info(f"✅ {domain} RESULTS: {domain_raw_count} raw → {domain_job_links} job links → {domain_valid_jobs} valid jobs")
 
                 except Exception as e:
                     logger.warning(f"Search failed for {domain}: {type(e).__name__}: {e}")
@@ -328,19 +354,23 @@ def _validate_job_posting(url: str) -> tuple[bool, str]:
 
         content = response.text
 
-        # Extract clean text using Trafilatura (thread-safe mode - disable timeout signals)
+        # Extract clean text using Trafilatura with aggressive settings
         try:
-            # Create config with disabled timeout to avoid signal issues in threading
+            # Create config with aggressive extraction settings
             config = deepcopy(DEFAULT_CONFIG)
             config['DEFAULT']['EXTRACTION_TIMEOUT'] = '0'
+            # Try more aggressive extraction
             clean_text = trafilatura.extract(
                 content,
                 config=config,
                 favor_recall=True,
+                favor_precision=False,
                 include_tables=True,
                 include_comments=True,
-                include_formatting=False,
-                no_fallback=False
+                include_formatting=True,
+                no_fallback=False,
+                with_metadata=False,
+                output_format='txt'
             )
         except Exception as e:
             logger.error(f"Trafilatura extraction failed: {e}")
@@ -351,16 +381,20 @@ def _validate_job_posting(url: str) -> tuple[bool, str]:
 
         # Primary filter: strong job posting indicators
         primary_indicators = [
-            'equal opp', 'equal emp',
+            'equal opp', 'equal emp', 'location', 'employment',
             'benefits', 'apply now', 'apply for this job'
         ]
 
         found_primary = [ind for ind in primary_indicators if ind in content_lower]
 
+        logger.debug(f"Content length: {len(content)}, Clean text length: {len(clean_text)}")
+        logger.debug(f"Found primary indicators: {found_primary}")
+        logger.debug(f"Content preview: {clean_text[:200]}...")
+
         if found_primary and len(content) > 500:
             return True, f"Valid job posting: {found_primary}"
 
-        return False, f"No primary indicators found: {found_primary}"
+        return False, f"Validation failed - Found indicators: {found_primary}, Content length: {len(content)}, Clean text length: {len(clean_text)}"
 
     except Exception as e:
         # If we can't validate, assume it's valid to be safe but log the error

@@ -8,6 +8,7 @@ import argparse
 import sys
 from ddgs import DDGS
 from .core import _is_job_link, _extract_company_name, _validate_job_posting
+from config import get_config
 
 def main():
     parser = argparse.ArgumentParser(description="Search ATS job boards (Greenhouse, Lever)")
@@ -17,10 +18,14 @@ def main():
 
     args = parser.parse_args()
 
+    # Get configuration
+    config = get_config()
+
     # Use keywords as-is (DuckDuckGo expression)
     keywords_expr = args.keywords.strip() if args.keywords else ""
 
-    domains = ["boards.greenhouse.io", "jobs.lever.co"]
+    # Use domains from configuration (exclude Ashby for CLI simplicity)
+    domains = [d for d in config.job_search.domains if d in ["boards.greenhouse.io", "jobs.lever.co"]]
     found_links = set()
     company_jobs = {}  # Track jobs by company to avoid duplicates
 
