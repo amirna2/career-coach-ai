@@ -3,8 +3,8 @@
 # Document handling functions
 from .document import load_text_file, load_pdf_file, chunk_text, simple_search, retrieve_context
 
-# Job search functionality
-from .job_search import search_jobs
+# Job search functionality (browser-based only)
+from .job_search import browser_search_jobs
 
 # Keep these imports available at package level for backward compatibility
 __all__ = [
@@ -13,5 +13,5 @@ __all__ = [
     'chunk_text',
     'simple_search',
     'retrieve_context',
-    'search_jobs'
+    'browser_search_jobs'
 ]

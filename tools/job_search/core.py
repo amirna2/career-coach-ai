@@ -4,6 +4,7 @@ import logging
 import requests
 import trafilatura
 from copy import deepcopy
+import urllib.parse
 from trafilatura.settings import DEFAULT_CONFIG
 from ddgs import DDGS
 from agents import function_tool
@@ -62,6 +63,13 @@ def parse_expression(expression: str) -> dict:
         else:
             # Required term
             parts["required"].append(part)
+
+        # inferred terms
+        # if required terms contain remote exclude on-site onsite and hybrid
+        if "remote" in parts["required"]:
+            for exclusion in ["on-site", "onsite", "hybrid"]:
+                if exclusion not in parts["excluded"]:
+                    parts["excluded"].append(exclusion)
 
     return parts
 
@@ -135,9 +143,9 @@ def search_jobs(title: str, expression: str = "", backend: str = "google", limit
 
         expression (str, optional): Boolean expression using custom syntax:
             EXPRESSION SYNTAX:
-            - && = AND (required terms): senior && remote
-            - || = OR (alternatives): (robotics || iot || autonomous)
-            - - = NOT (exclusions): -firmware && -intern
+            - && = logical AND (required terms): senior && remote
+            - || = logical OR (alternatives): (robotics || iot || autonomous)
+            - - = logical NOT (exclusions): -firmware && -intern
             - () = grouping: (python || c++) && -frontend
 
             Examples:
@@ -400,3 +408,56 @@ def _validate_job_posting(url: str) -> tuple[bool, str]:
         # If we can't validate, assume it's valid to be safe but log the error
         logger.warning(f"Validation error for {url}: {e}")
         return True, f"Validation error (assumed valid): {str(e)}"
+
+
+@function_tool
+def build_jobs_search_query(title: str, expression: str = "", backend: str = None) -> str:
+    """Build ATS job search queries and preview URLs without opening the browser.
+
+    Args:
+        title: Standardized role title, e.g., "Senior Software Engineer".
+        expression: Boolean expression per custom syntax, e.g., "remote && (robotics || iot) && -react && -typescript".
+        backend: Optional search backend name (google|bing|yahoo). Defaults to config.
+
+    Returns:
+        A formatted preview string including the compiled query and Google search URLs
+        for configured ATS domains. This function DOES NOT open tabs.
+    """
+    config = get_config()
+    if backend is None:
+        backend = config.job_search.default_backend
+
+    # Parse and compile
+    expression_parts = parse_expression(expression)
+    compiled = compile_query_for_backend(title, expression_parts, backend)
+
+    # Build per-domain Google search URLs with readable labels
+    domains = config.job_search.domains
+    domain_label = {
+        "boards.greenhouse.io": "Greenhouse",
+        "jobs.lever.co": "Lever",
+        "jobs.ashbyhq.com": "Ashby"
+    }
+
+    link_lines = []
+    for domain in domains:
+        label = domain_label.get(domain, domain)
+        query = f'site:{domain} {compiled} intext:"apply" intext:"employment"'
+        google_url = f"https://www.google.com/search?q={urllib.parse.quote_plus(query)}"
+        # Explicit markdown link ensures clickability in Chat UI
+        link_lines.append(f"- [{label}]({google_url})")
+
+    lines = [
+        f"### Job Search Plan",
+        f"- **Title**: {title}",
+        f"- **Expression**: {expression or '(none)'}",
+        f"- **Backend**: {backend}",
+        "",
+        "### Open These Searches",
+        *link_lines,
+        "",
+        "Say 'open now' or click 'Open ATS searches' to launch tabs."
+    ]
+    preview = "\n".join(lines)
+    logger.info("Built job search plan for preview")
+    return preview

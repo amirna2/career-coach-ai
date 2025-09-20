@@ -41,7 +41,7 @@ interface:
   server_port: 7861
   share: false
   show_error: true
-  chatbot_height: 650
+  chatbot_height: 600
   show_copy_button: true
   show_copy_all_button: true
   examples:
